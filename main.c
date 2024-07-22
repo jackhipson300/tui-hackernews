@@ -62,30 +62,93 @@ char* read_rss(const char *url) {
   return chunk.memory;
 }
 
-int parse_xml(const char *raw) {
+
+typedef struct {
+  char *title;
+  char *link;
+  char *comments_link;
+} Post;
+
+typedef struct {
+  Post **arr;
+  unsigned int len;
+} Posts;
+
+void print_post(Post *post) {
+  printf("Title: %s\n", post->title);
+  printf("\tLink: %s\n", post->link);
+  printf("\tComments: %s\n", post->comments_link);
+}
+
+Posts* parse_xml(const char *raw) {
   xmlDoc *doc = NULL;
 
   doc = xmlReadMemory(raw, (int)strlen(raw), NULL, NULL, 0);
   if(doc == NULL) {
     fprintf(stderr, "XML parse failed\n");
-    return 1;
+    return NULL;
   }
 
+  unsigned int num_items = 0;
   xmlNode *curr = xmlDocGetRootElement(doc);
   curr = curr->xmlChildrenNode->xmlChildrenNode;
   while(curr != NULL) {
     if(!xmlStrcmp(curr->name, (const xmlChar *)"item")) {
-      xmlNode *childCurr = curr->xmlChildrenNode;
-      while(childCurr != NULL) {
-        xmlChar *title;
-        if(!xmlStrcmp(childCurr->name, (const xmlChar *)"title")) {
-          title = xmlNodeListGetString(doc, childCurr->xmlChildrenNode, 1);
-          printf("%s\n", title);
-          xmlFree(title);
+      num_items++;
+    }
+
+    curr = curr->next;
+  }
+
+  printf("%d\n", num_items);
+
+  Post **posts_arr = malloc(sizeof(Post*) * num_items);
+
+  int i = 0;
+  curr = xmlDocGetRootElement(doc)->xmlChildrenNode->xmlChildrenNode;
+  while(curr != NULL) {
+    if(!xmlStrcmp(curr->name, (const xmlChar *)"item")) {
+      xmlNode *child_curr = curr->xmlChildrenNode;
+      xmlChar *title;
+      xmlChar *link;
+      xmlChar *comments_link;
+      while(child_curr != NULL) {
+        if(!xmlStrcmp(child_curr->name, (const xmlChar *)"title")) {
+          title = xmlNodeListGetString(doc, child_curr->xmlChildrenNode, 1);
+        } else if(!xmlStrcmp(child_curr->name, (const xmlChar *)"link")) {
+          link = xmlNodeListGetString(doc, child_curr->xmlChildrenNode, 1);
+        } else if(!xmlStrcmp(child_curr->name, (const xmlChar *)"comments")) {
+          comments_link = xmlNodeListGetString(doc, child_curr->xmlChildrenNode, 1);
         }
 
-        childCurr = childCurr->next;
+        child_curr = child_curr->next;
       }
+
+      Post *post = malloc(sizeof(Post));
+      post->title = malloc(strlen((char*)title) + 1);
+      post->link = malloc(strlen((char*)link) + 1);
+      post->comments_link = malloc(strlen((char*)comments_link) + 1);
+
+      strcpy(post->title, (char*)title);
+      strcpy(post->link, (char*)link);
+      strcpy(post->comments_link, (char*)comments_link);
+
+      if(title != NULL) {
+        xmlFree(title);
+        title = NULL;
+      }
+      if(link != NULL) {
+        xmlFree(link);
+        link = NULL;
+      }
+      if(comments_link != NULL) {
+        xmlFree(comments_link);
+        comments_link = NULL;
+      }
+
+      posts_arr[i] = post;
+
+      i++;
     }
 
     curr = curr->next;
@@ -94,21 +157,35 @@ int parse_xml(const char *raw) {
   xmlFreeDoc(doc);
   xmlCleanupParser();
 
-  return 0;
+  Posts *posts = malloc(sizeof(Posts));
+  posts->arr = posts_arr;
+  posts->len = num_items;
+
+  return posts;
 }
 
 int main() {
-  char *rss_xml = read_rss("https://hnrss.org/best");
+  char *rss_xml = read_rss("https://hnrss.org/frontpage");
 
   if(rss_xml == NULL) {
     return 1;
   }
 
-  // printf("%s\n", rss_xml);
-
-  parse_xml(rss_xml);
+  Posts *posts = parse_xml(rss_xml);
+  for(unsigned int i = 0; i < posts->len; i++) {
+    print_post((posts->arr)[i]);
+  }
 
   free(rss_xml);
+  for(unsigned int i = 0; i < posts->len; i++) {
+    free(posts->arr[i]->title);
+    free(posts->arr[i]->link);
+    free(posts->arr[i]->comments_link);
+    free(posts->arr[i]);
+  }
+  free(posts->arr);
+  free(posts);
+  // system("firefox --new-window https://news.ycombinator.com");
 
   return 0;
 }
