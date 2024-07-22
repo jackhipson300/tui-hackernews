@@ -64,7 +64,6 @@ char* read_rss(const char *url) {
 
 int parse_xml(const char *raw) {
   xmlDoc *doc = NULL;
-  xmlNode *root = NULL;
 
   doc = xmlReadMemory(raw, (int)strlen(raw), NULL, NULL, 0);
   if(doc == NULL) {
@@ -72,9 +71,25 @@ int parse_xml(const char *raw) {
     return 1;
   }
 
-  root = xmlDocGetRootElement(doc);
+  xmlNode *curr = xmlDocGetRootElement(doc);
+  curr = curr->xmlChildrenNode->xmlChildrenNode;
+  while(curr != NULL) {
+    if(!xmlStrcmp(curr->name, (const xmlChar *)"item")) {
+      xmlNode *childCurr = curr->xmlChildrenNode;
+      while(childCurr != NULL) {
+        xmlChar *title;
+        if(!xmlStrcmp(childCurr->name, (const xmlChar *)"title")) {
+          title = xmlNodeListGetString(doc, childCurr->xmlChildrenNode, 1);
+          printf("%s\n", title);
+          xmlFree(title);
+        }
 
-  printf("Root: %s\n", root->name);
+        childCurr = childCurr->next;
+      }
+    }
+
+    curr = curr->next;
+  }
 
   xmlFreeDoc(doc);
   xmlCleanupParser();
@@ -88,6 +103,8 @@ int main() {
   if(rss_xml == NULL) {
     return 1;
   }
+
+  // printf("%s\n", rss_xml);
 
   parse_xml(rss_xml);
 
