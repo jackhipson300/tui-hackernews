@@ -3,6 +3,7 @@
 #include <curl/curl.h>
 #include <libxml/parser.h>
 #include <libxml/tree.h>
+#include <ncurses.h>
 
 struct MemoryStruct {
   char *memory;
@@ -80,6 +81,13 @@ void print_post(Post *post) {
   printf("\tComments: %s\n", post->comments_link);
 }
 
+void free_post(Post *post) {
+  free(post->title);
+  free(post->link);
+  free(post->comments_link);
+  free(post);
+}
+
 Posts* parse_xml(const char *raw) {
   xmlDoc *doc = NULL;
 
@@ -94,7 +102,7 @@ Posts* parse_xml(const char *raw) {
   curr = curr->xmlChildrenNode->xmlChildrenNode;
   while(curr != NULL) {
     if(!xmlStrcmp(curr->name, (const xmlChar *)"item")) {
-      num_items++;
+      ++num_items;
     }
 
     curr = curr->next;
@@ -148,7 +156,7 @@ Posts* parse_xml(const char *raw) {
 
       posts_arr[i] = post;
 
-      i++;
+      ++i;
     }
 
     curr = curr->next;
@@ -165,27 +173,39 @@ Posts* parse_xml(const char *raw) {
 }
 
 int main() {
-  char *rss_xml = read_rss("https://hnrss.org/frontpage");
-
-  if(rss_xml == NULL) {
-    return 1;
-  }
-
-  Posts *posts = parse_xml(rss_xml);
-  for(unsigned int i = 0; i < posts->len; i++) {
-    print_post((posts->arr)[i]);
-  }
-
-  free(rss_xml);
-  for(unsigned int i = 0; i < posts->len; i++) {
-    free(posts->arr[i]->title);
-    free(posts->arr[i]->link);
-    free(posts->arr[i]->comments_link);
-    free(posts->arr[i]);
-  }
-  free(posts->arr);
-  free(posts);
+  /*char *rss_xml = read_rss("https://hnrss.org/frontpage");*/
+  /**/
+  /*if(rss_xml == NULL) {*/
+  /*  return 1;*/
+  /*}*/
+  /**/
+  /*Posts *posts = parse_xml(rss_xml);*/
+  /*for(unsigned int i = 0; i < posts->len; ++i) {*/
+  /*  print_post((posts->arr)[i]);*/
+  /*}*/
+  /**/
+  /*free(rss_xml);*/
+  /*for(unsigned int i = 0; i < posts->len; ++i) {*/
+  /*  free_post(posts->arr[i]);*/
+  /*}*/
+  /*free(posts->arr);*/
+  /*free(posts);*/
   // system("firefox --new-window https://news.ycombinator.com");
+  
+  initscr();
+  cbreak();
+  noecho(); 
+
+  printw("Hello, World!");
+  refresh();
+
+  int ch;
+  while((ch = getch()) != 'q') {
+    printw("%d", ch);
+    refresh();
+  }
+  
+  endwin();
 
   return 0;
 }
