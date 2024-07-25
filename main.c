@@ -1,5 +1,7 @@
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 #include <curl/curl.h>
 #include <libxml/parser.h>
 #include <libxml/tree.h>
@@ -246,8 +248,18 @@ Posts* update_posts(Posts *posts, char *url) {
   return new_posts;
 }
 
+void open_link(char *link) {
+  pid_t pid = fork();
+  if(pid == 0) {
+    // redirect output from child process since it messes with curses
+    freopen("/dev/null", "w", stdout);
+    freopen("/dev/null", "w", stderr);
+
+    execlp("firefox", "firefox", "--new-window", link, (char*)NULL);
+  }
+}
+
 int main() {
-  // system("firefox --new-window https://news.ycombinator.com");
   Posts *posts = get_posts(BEST_URL);
   if(posts == NULL) {
     return 1;
@@ -303,6 +315,12 @@ int main() {
           posts = update_posts(posts, NEWEST_URL);
           curr_filter = 'n';
         }
+        break;
+      case 'o':
+        open_link(posts->arr[highlight_idx]->link);
+        break;
+      case 'c':
+        open_link(posts->arr[highlight_idx]->comments_link);
         break;
       default:
         break;
