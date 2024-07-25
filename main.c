@@ -5,6 +5,11 @@
 #include <libxml/tree.h>
 #include <ncurses.h>
 
+#define MENU_HEIGHT 3
+#define BEST_URL "https://hnrss.org/best"
+#define FRONT_PAGE_URL "https://hnrss.org/frontpage"
+#define NEWEST_URL "https://hnrss.org/newest"
+
 struct MemoryStruct {
   char *memory;
   size_t size;
@@ -72,7 +77,7 @@ typedef struct {
 
 typedef struct {
   Post **arr;
-  unsigned int len;
+  int len;
 } Posts;
 
 void print_post(Post *post) {
@@ -81,11 +86,15 @@ void print_post(Post *post) {
   printf("\tComments: %s\n", post->comments_link);
 }
 
-void free_post(Post *post) {
-  free(post->title);
-  free(post->link);
-  free(post->comments_link);
-  free(post);
+void free_posts(Posts *posts) {
+  for(int i = 0; i < posts->len; ++i) {
+    free(posts->arr[i]->title);
+    free(posts->arr[i]->link);
+    free(posts->arr[i]->comments_link);
+    free(posts->arr[i]);
+  }
+  free(posts->arr);
+  free(posts);
 }
 
 Posts* parse_xml(const char *raw) {
@@ -97,7 +106,7 @@ Posts* parse_xml(const char *raw) {
     return NULL;
   }
 
-  unsigned int num_items = 0;
+  int num_items = 0;
   xmlNode *curr = xmlDocGetRootElement(doc);
   curr = curr->xmlChildrenNode->xmlChildrenNode;
   while(curr != NULL) {
@@ -108,9 +117,7 @@ Posts* parse_xml(const char *raw) {
     curr = curr->next;
   }
 
-  printf("%d\n", num_items);
-
-  Post **posts_arr = malloc(sizeof(Post*) * num_items);
+  Post **posts_arr = malloc((size_t)((int)sizeof(Post*) * num_items));
 
   int i = 0;
   curr = xmlDocGetRootElement(doc)->xmlChildrenNode->xmlChildrenNode;
@@ -172,40 +179,148 @@ Posts* parse_xml(const char *raw) {
   return posts;
 }
 
+void print_menu(WINDOW *win, int height, int width, char *choices[][2], int num_choices) {
+  box(win, 0, 0);
+  int avail_width_per_item = width / num_choices;
+
+  for(int i = 0; i < num_choices; ++i) {
+    int len = (int)strlen(choices[i][1]);
+    int avail_width = avail_width_per_item - (len + 2);
+    int offset = avail_width / 2;
+    if(offset < 0) {
+      offset = 0;
+    }
+
+    int absolute_offset = (avail_width_per_item * i) + offset;
+    wmove(win, height / 2, absolute_offset);
+    wattron(win, COLOR_PAIR(1));
+    wprintw(win, "%s", choices[i][0]);
+    wattroff(win, COLOR_PAIR(1));
+    wmove(win, height / 2, absolute_offset + 2);
+    wprintw(win, "%s", choices[i][1]);
+  }
+  wrefresh(win);
+}
+
+void print_posts(WINDOW *win, Posts *posts, int highlight_idx) {
+  for(int i = 0; i < posts->len; ++i) {
+    wmove(win, i * 2, 0);
+    wclrtoeol(win);
+    if(highlight_idx == i) {
+      wattron(win, A_REVERSE);
+      wchgat(win, 5, A_REVERSE, 0, NULL);
+    } else {
+      wchgat(win, -1, A_NORMAL, 0, NULL);
+    }
+
+    wprintw(win, "%d.", i + 1);
+    wmove(win, i * 2, 4);
+    wprintw(win, "%s ", posts->arr[i]->title);
+
+    if(highlight_idx == i) {
+      wattroff(win, A_REVERSE);
+    }
+  }
+  wrefresh(win);
+}
+
+Posts* get_posts(char *url) {
+  char *rss_xml = read_rss(url);
+  
+  if(rss_xml == NULL) {
+    return NULL;
+  }
+  
+  Posts* posts = parse_xml(rss_xml);
+  free(rss_xml);
+  return posts;
+}
+
+Posts* update_posts(Posts *posts, char *url) {
+  Posts *new_posts = get_posts(url);
+  if(new_posts == NULL) {
+    return posts;
+  }
+
+  free_posts(posts);
+  return new_posts;
+}
+
 int main() {
-  /*char *rss_xml = read_rss("https://hnrss.org/frontpage");*/
-  /**/
-  /*if(rss_xml == NULL) {*/
-  /*  return 1;*/
-  /*}*/
-  /**/
-  /*Posts *posts = parse_xml(rss_xml);*/
-  /*for(unsigned int i = 0; i < posts->len; ++i) {*/
-  /*  print_post((posts->arr)[i]);*/
-  /*}*/
-  /**/
-  /*free(rss_xml);*/
-  /*for(unsigned int i = 0; i < posts->len; ++i) {*/
-  /*  free_post(posts->arr[i]);*/
-  /*}*/
-  /*free(posts->arr);*/
-  /*free(posts);*/
   // system("firefox --new-window https://news.ycombinator.com");
+  Posts *posts = get_posts(BEST_URL);
+  if(posts == NULL) {
+    return 1;
+  }
+
+  char *choices[][2] = {
+    { "b", "Best" },
+    { "f", "Front Page" },
+    { "n", "Newest" }
+  };
+  int num_choices = 3;
+
+  WINDOW *menu_win;
   
   initscr();
+  start_color();
   cbreak();
   noecho(); 
 
-  printw("Hello, World!");
+  init_pair(1, COLOR_GREEN, COLOR_BLACK);
+
+  int screen_height, screen_width;
+  getmaxyx(stdscr, screen_height, screen_width);
+
+  menu_win = newwin(MENU_HEIGHT, screen_width, screen_height - MENU_HEIGHT, 0);
   refresh();
 
   int ch;
-  while((ch = getch()) != 'q') {
-    printw("%d", ch);
+  int highlight_idx = 0;
+  char curr_filter = 'b';
+  do {
+    switch(ch) {
+      case 'j':
+        ++highlight_idx;
+        break;
+      case 'k':
+        --highlight_idx;
+        break;
+      case 'b':
+        if(curr_filter != 'b') {
+          posts = update_posts(posts, BEST_URL);
+          curr_filter = 'b';
+        }
+        break;
+      case 'f':
+        if(curr_filter != 'f') {
+          posts = update_posts(posts, FRONT_PAGE_URL);
+          curr_filter = 'f';
+        }
+        break;
+      case 'n':
+        if(curr_filter != 'n') {
+          posts = update_posts(posts, NEWEST_URL);
+          curr_filter = 'n';
+        }
+        break;
+      default:
+        break;
+    }
+
+    if(highlight_idx < 0) {
+      highlight_idx = 0;
+    } else if(highlight_idx >= posts->len) {
+      highlight_idx = posts->len;
+    }
+
+    print_posts(stdscr, posts, highlight_idx);
+    print_menu(menu_win, MENU_HEIGHT, screen_width, choices, num_choices);
     refresh();
-  }
+  } while((ch = getch()) != 'q');
   
   endwin();
+  free_posts(posts);
 
   return 0;
 }
