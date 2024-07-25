@@ -7,7 +7,9 @@
 #include <libxml/tree.h>
 #include <ncurses.h>
 
-#define MENU_HEIGHT 3
+#define BOTTOM_MENU_HEIGHT 3
+#define SIDE_MENU_WIDTH 30
+
 #define BEST_URL "https://hnrss.org/best"
 #define FRONT_PAGE_URL "https://hnrss.org/frontpage"
 #define NEWEST_URL "https://hnrss.org/newest"
@@ -181,10 +183,10 @@ Posts* parse_xml(const char *raw) {
   return posts;
 }
 
-void print_menu(WINDOW *win, int height, int width, char *choices[][2], int num_choices) {
+void display_bottom_menu(WINDOW *win, int height, int width, char *choices[][2], int num_choices) {
   box(win, 0, 0);
-  int avail_width_per_item = width / num_choices;
 
+  int avail_width_per_item = width / num_choices;
   for(int i = 0; i < num_choices; ++i) {
     int len = (int)strlen(choices[i][1]);
     int avail_width = avail_width_per_item - (len + 2);
@@ -201,12 +203,30 @@ void print_menu(WINDOW *win, int height, int width, char *choices[][2], int num_
     wmove(win, height / 2, absolute_offset + 2);
     wprintw(win, "%s", choices[i][1]);
   }
+
   wrefresh(win);
 }
 
-void print_posts(WINDOW *win, Posts *posts, int highlight_idx) {
+void display_side_menu(WINDOW *win, char *controls[][2], int num_controls) {
+  box(win, 0, 0);
+
+  int y ;
+  for(int i = 0; i < num_controls; ++i) {
+    y = (i * 2) + 1;
+    wmove(win, y, 2);
+    wattron(win, COLOR_PAIR(2));
+    wprintw(win, "%s", controls[i][0]);
+    wattroff(win, COLOR_PAIR(2));
+    wmove(win, y, 4);
+    wprintw(win, "%s", controls[i][1]);
+  }
+
+  wrefresh(win);
+}
+
+void display_posts(WINDOW *win, Posts *posts, int highlight_idx) {
   for(int i = 0; i < posts->len; ++i) {
-    wmove(win, i * 2, 0);
+    wmove(win, (i * 2) + 1, 2);
     wclrtoeol(win);
     if(highlight_idx == i) {
       wattron(win, A_REVERSE);
@@ -216,7 +236,7 @@ void print_posts(WINDOW *win, Posts *posts, int highlight_idx) {
     }
 
     wprintw(win, "%d.", i + 1);
-    wmove(win, i * 2, 4);
+    wmove(win, (i * 2) + 1, 6);
     wprintw(win, "%s ", posts->arr[i]->title);
 
     if(highlight_idx == i) {
@@ -272,7 +292,16 @@ int main() {
   };
   int num_choices = 3;
 
-  WINDOW *menu_win;
+  char *controls[][2] = {
+    { "j", "Move Down" },
+    { "k", "Move Up" },
+    { "o", "Open Article" },
+    { "c", "Open Comments" },
+  };
+  int num_controls = 4;
+
+  WINDOW *bottom_menu_win;
+  WINDOW *side_menu_win;
   
   initscr();
   start_color();
@@ -280,11 +309,14 @@ int main() {
   noecho(); 
 
   init_pair(1, COLOR_GREEN, COLOR_BLACK);
+  init_pair(2, COLOR_BLUE, COLOR_BLACK);
 
-  int screen_height, screen_width;
+  int screen_height, screen_width, side_menu_height;
   getmaxyx(stdscr, screen_height, screen_width);
+  side_menu_height = screen_height - BOTTOM_MENU_HEIGHT;
 
-  menu_win = newwin(MENU_HEIGHT, screen_width, screen_height - MENU_HEIGHT, 0);
+  bottom_menu_win = newwin(BOTTOM_MENU_HEIGHT, screen_width, screen_height - BOTTOM_MENU_HEIGHT, 0);
+  side_menu_win = newwin(side_menu_height, SIDE_MENU_WIDTH, 0, screen_width - SIDE_MENU_WIDTH);
   refresh();
 
   int ch;
@@ -332,8 +364,9 @@ int main() {
       highlight_idx = posts->len;
     }
 
-    print_posts(stdscr, posts, highlight_idx);
-    print_menu(menu_win, MENU_HEIGHT, screen_width, choices, num_choices);
+    display_posts(stdscr, posts, highlight_idx);
+    display_bottom_menu(bottom_menu_win, BOTTOM_MENU_HEIGHT, screen_width, choices, num_choices);
+    display_side_menu(side_menu_win, controls, num_controls);
     refresh();
   } while((ch = getch()) != 'q');
   
