@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <regex.h>
 #include <curl/curl.h>
 #include <libxml/parser.h>
 #include <libxml/tree.h>
@@ -77,6 +78,7 @@ typedef struct {
   char *title;
   char *link;
   char *comments_link;
+  char *num_comments;
 } Post;
 
 typedef struct {
@@ -123,12 +125,16 @@ Posts* parse_xml(const char *raw) {
 
   Post **posts_arr = malloc((size_t)((int)sizeof(Post*) * num_items));
 
+  regex_t num_comments_regex;
+  int regcomp_res = regcomp(&num_comments_regex, "# Comments: ([0-9]+)", REG_EXTENDED);
+
   int i = 0;
   curr = xmlDocGetRootElement(doc)->xmlChildrenNode->xmlChildrenNode;
   while(curr != NULL) {
     if(!xmlStrcmp(curr->name, (const xmlChar *)"item")) {
       xmlNode *child_curr = curr->xmlChildrenNode;
       xmlChar *title;
+      xmlChar *description;
       xmlChar *link;
       xmlChar *comments_link;
       while(child_curr != NULL) {
@@ -138,15 +144,32 @@ Posts* parse_xml(const char *raw) {
           link = xmlNodeListGetString(doc, child_curr->xmlChildrenNode, 1);
         } else if(!xmlStrcmp(child_curr->name, (const xmlChar *)"comments")) {
           comments_link = xmlNodeListGetString(doc, child_curr->xmlChildrenNode, 1);
+        } else if(!xmlStrcmp(child_curr->name, (const xmlChar *)"description")) {
+          description = xmlNodeListGetString(doc, child_curr->xmlChildrenNode, 1);
         }
 
         child_curr = child_curr->next;
+      }
+
+      char *num_comments_str = "?";
+      if(regcomp_res == 0) {
+        regmatch_t matches[2];
+        int regexec_res = regexec(&num_comments_regex, (char*)description, 2, matches, 0);
+        if(regexec_res == 0) {
+          size_t substr_size = (size_t)(matches[1].rm_eo - matches[1].rm_so);
+          num_comments_str = malloc(sizeof(char) * (substr_size + 1));
+          for(int j = matches[1].rm_so; j < matches[1].rm_eo; ++j) {
+            num_comments_str[j - matches[1].rm_so] = (char)description[j];
+          }
+          num_comments_str[substr_size] = '\0';
+        }
       }
 
       Post *post = malloc(sizeof(Post));
       post->title = malloc(strlen((char*)title) + 1);
       post->link = malloc(strlen((char*)link) + 1);
       post->comments_link = malloc(strlen((char*)comments_link) + 1);
+      post->num_comments = num_comments_str;
 
       strcpy(post->title, (char*)title);
       strcpy(post->link, (char*)link);
@@ -183,7 +206,7 @@ Posts* parse_xml(const char *raw) {
   return posts;
 }
 
-void display_bottom_menu(WINDOW *win, int height, int width, char *choices[][2], int num_choices) {
+void display_bottom_menu(WINDOW *win, int height, int width, char *choices[][2], int num_choices, char curr_filter) {
   box(win, 0, 0);
 
   int avail_width_per_item = width / num_choices;
@@ -195,13 +218,30 @@ void display_bottom_menu(WINDOW *win, int height, int width, char *choices[][2],
       offset = 0;
     }
 
+    int should_highlight = curr_filter == choices[i][0][0];
+    int color_pair = 1;
+    if(should_highlight) {
+      color_pair = 3;
+    }
+
     int absolute_offset = (avail_width_per_item * i) + offset;
     wmove(win, height / 2, absolute_offset);
-    wattron(win, COLOR_PAIR(1));
+    wattron(win, COLOR_PAIR(color_pair));
     wprintw(win, "%s", choices[i][0]);
-    wattroff(win, COLOR_PAIR(1));
+    wattroff(win, COLOR_PAIR(color_pair));
+
+    if(should_highlight) {
+      wattron(win, A_REVERSE);
+    }
+
+    wmove(win, height / 2, absolute_offset + 1);
+    wprintw(win, " ");
     wmove(win, height / 2, absolute_offset + 2);
     wprintw(win, "%s", choices[i][1]);
+
+    if(curr_filter == choices[i][0][0]) {
+      wattroff(win, A_REVERSE);
+    }
   }
 
   wrefresh(win);
@@ -237,7 +277,12 @@ void display_posts(WINDOW *win, Posts *posts, int highlight_idx) {
 
     wprintw(win, "%d.", i + 1);
     wmove(win, (i * 2) + 1, 6);
-    wprintw(win, "%s ", posts->arr[i]->title);
+    wprintw(win, "%s", posts->arr[i]->title);
+    wprintw(win, " (");
+    wattron(win, COLOR_PAIR(1));
+    wprintw(win, "%s", posts->arr[i]->num_comments);
+    wattroff(win, COLOR_PAIR(1));
+    wprintw(win, ")");
 
     if(highlight_idx == i) {
       wattroff(win, A_REVERSE);
@@ -297,9 +342,11 @@ int main() {
     { "k", "Move Up" },
     { "o", "Open Article" },
     { "c", "Open Comments" },
+    { "q", "Quit" }
   };
-  int num_controls = 4;
+  int num_controls = 5;
 
+  WINDOW *posts_win;
   WINDOW *bottom_menu_win;
   WINDOW *side_menu_win;
   
@@ -307,22 +354,31 @@ int main() {
   start_color();
   cbreak();
   noecho(); 
+  curs_set(0);
 
   init_pair(1, COLOR_GREEN, COLOR_BLACK);
-  init_pair(2, COLOR_BLUE, COLOR_BLACK);
+  init_pair(2, COLOR_CYAN, COLOR_BLACK);
+  init_pair(3, COLOR_GREEN, COLOR_WHITE);
 
-  int screen_height, screen_width, side_menu_height;
+  // initialize windows
+  int screen_height, screen_width;
   getmaxyx(stdscr, screen_height, screen_width);
-  side_menu_height = screen_height - BOTTOM_MENU_HEIGHT;
-
+  posts_win = newwin(screen_height - BOTTOM_MENU_HEIGHT, screen_width - SIDE_MENU_WIDTH, 0, 0);
   bottom_menu_win = newwin(BOTTOM_MENU_HEIGHT, screen_width, screen_height - BOTTOM_MENU_HEIGHT, 0);
-  side_menu_win = newwin(side_menu_height, SIDE_MENU_WIDTH, 0, screen_width - SIDE_MENU_WIDTH);
+  side_menu_win = newwin(screen_height - BOTTOM_MENU_HEIGHT, SIDE_MENU_WIDTH, 0, screen_width - SIDE_MENU_WIDTH);
   refresh();
 
-  int ch;
   int highlight_idx = 0;
   char curr_filter = 'b';
+
+  // initial display
+  display_side_menu(side_menu_win, controls, num_controls);
+  display_bottom_menu(bottom_menu_win, BOTTOM_MENU_HEIGHT, screen_width, choices, num_choices, curr_filter);
+
+  int should_refresh_bottom_menu;
+  int ch;
   do {
+    should_refresh_bottom_menu = 0;
     switch(ch) {
       case 'j':
         ++highlight_idx;
@@ -335,18 +391,21 @@ int main() {
           posts = update_posts(posts, BEST_URL);
           curr_filter = 'b';
         }
+        should_refresh_bottom_menu = 1;
         break;
       case 'f':
         if(curr_filter != 'f') {
           posts = update_posts(posts, FRONT_PAGE_URL);
           curr_filter = 'f';
         }
+        should_refresh_bottom_menu = 1;
         break;
       case 'n':
         if(curr_filter != 'n') {
           posts = update_posts(posts, NEWEST_URL);
           curr_filter = 'n';
         }
+        should_refresh_bottom_menu = 1;
         break;
       case 'o':
         open_link(posts->arr[highlight_idx]->link);
@@ -361,12 +420,14 @@ int main() {
     if(highlight_idx < 0) {
       highlight_idx = 0;
     } else if(highlight_idx >= posts->len) {
-      highlight_idx = posts->len;
+      highlight_idx = posts->len - 1;
     }
 
-    display_posts(stdscr, posts, highlight_idx);
-    display_bottom_menu(bottom_menu_win, BOTTOM_MENU_HEIGHT, screen_width, choices, num_choices);
-    display_side_menu(side_menu_win, controls, num_controls);
+    display_posts(posts_win, posts, highlight_idx);
+    if(should_refresh_bottom_menu) {
+      display_bottom_menu(bottom_menu_win, BOTTOM_MENU_HEIGHT, screen_width, choices, num_choices, curr_filter);
+    }
+    
     refresh();
   } while((ch = getch()) != 'q');
   
