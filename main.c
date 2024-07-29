@@ -3,6 +3,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <regex.h>
+#include <assert.h>
 #include <curl/curl.h>
 #include <libxml/parser.h>
 #include <libxml/tree.h>
@@ -97,13 +98,14 @@ void free_posts(Posts *posts) {
     free(posts->arr[i]->title);
     free(posts->arr[i]->link);
     free(posts->arr[i]->comments_link);
+    free(posts->arr[i]->num_comments);
     free(posts->arr[i]);
   }
   free(posts->arr);
   free(posts);
 }
 
-Posts* parse_xml(const char *raw) {
+Posts* parse_xml(const char *raw, regex_t *num_comments_regex) {
   xmlDoc *doc = NULL;
 
   doc = xmlReadMemory(raw, (int)strlen(raw), NULL, NULL, 0);
@@ -125,8 +127,6 @@ Posts* parse_xml(const char *raw) {
 
   Post **posts_arr = malloc((size_t)((int)sizeof(Post*) * num_items));
 
-  regex_t num_comments_regex;
-  int regcomp_res = regcomp(&num_comments_regex, "# Comments: ([0-9]+)", REG_EXTENDED);
 
   int i = 0;
   curr = xmlDocGetRootElement(doc)->xmlChildrenNode->xmlChildrenNode;
@@ -152,17 +152,15 @@ Posts* parse_xml(const char *raw) {
       }
 
       char *num_comments_str = "?";
-      if(regcomp_res == 0) {
-        regmatch_t matches[2];
-        int regexec_res = regexec(&num_comments_regex, (char*)description, 2, matches, 0);
-        if(regexec_res == 0) {
-          size_t substr_size = (size_t)(matches[1].rm_eo - matches[1].rm_so);
-          num_comments_str = malloc(sizeof(char) * (substr_size + 1));
-          for(int j = matches[1].rm_so; j < matches[1].rm_eo; ++j) {
-            num_comments_str[j - matches[1].rm_so] = (char)description[j];
-          }
-          num_comments_str[substr_size] = '\0';
+      regmatch_t matches[2];
+      int regexec_res = regexec(num_comments_regex, (char*)description, 2, matches, 0);
+      if(regexec_res == 0) {
+        size_t substr_size = (size_t)(matches[1].rm_eo - matches[1].rm_so);
+        num_comments_str = malloc(sizeof(char) * (substr_size + 1));
+        for(int j = matches[1].rm_so; j < matches[1].rm_eo; ++j) {
+          num_comments_str[j - matches[1].rm_so] = (char)description[j];
         }
+        num_comments_str[substr_size] = '\0';
       }
 
       Post *post = malloc(sizeof(Post));
@@ -186,6 +184,10 @@ Posts* parse_xml(const char *raw) {
       if(comments_link != NULL) {
         xmlFree(comments_link);
         comments_link = NULL;
+      }
+      if(description != NULL) {
+        xmlFree(description);
+        description = NULL;
       }
 
       posts_arr[i] = post;
@@ -291,20 +293,20 @@ void display_posts(WINDOW *win, Posts *posts, int highlight_idx) {
   wrefresh(win);
 }
 
-Posts* get_posts(char *url) {
+Posts* get_posts(char *url, regex_t *num_comments_regex) {
   char *rss_xml = read_rss(url);
   
   if(rss_xml == NULL) {
     return NULL;
   }
   
-  Posts* posts = parse_xml(rss_xml);
+  Posts* posts = parse_xml(rss_xml, num_comments_regex);
   free(rss_xml);
   return posts;
 }
 
-Posts* update_posts(Posts *posts, char *url) {
-  Posts *new_posts = get_posts(url);
+Posts* update_posts(Posts *posts, char *url, regex_t *num_comments_regex) {
+  Posts *new_posts = get_posts(url, num_comments_regex);
   if(new_posts == NULL) {
     return posts;
   }
@@ -325,7 +327,11 @@ void open_link(char *link) {
 }
 
 int main() {
-  Posts *posts = get_posts(BEST_URL);
+  regex_t num_comments_regex;
+  int regcomp_res = regcomp(&num_comments_regex, "# Comments: ([0-9]+)", REG_EXTENDED);
+  assert(regcomp_res == 0);
+
+  Posts *posts = get_posts(BEST_URL, &num_comments_regex);
   if(posts == NULL) {
     return 1;
   }
@@ -388,21 +394,21 @@ int main() {
         break;
       case 'b':
         if(curr_filter != 'b') {
-          posts = update_posts(posts, BEST_URL);
+          posts = update_posts(posts, BEST_URL, &num_comments_regex);
           curr_filter = 'b';
         }
         should_refresh_bottom_menu = 1;
         break;
       case 'f':
         if(curr_filter != 'f') {
-          posts = update_posts(posts, FRONT_PAGE_URL);
+          posts = update_posts(posts, FRONT_PAGE_URL, &num_comments_regex);
           curr_filter = 'f';
         }
         should_refresh_bottom_menu = 1;
         break;
       case 'n':
         if(curr_filter != 'n') {
-          posts = update_posts(posts, NEWEST_URL);
+          posts = update_posts(posts, NEWEST_URL, &num_comments_regex);
           curr_filter = 'n';
         }
         should_refresh_bottom_menu = 1;
@@ -431,8 +437,12 @@ int main() {
     refresh();
   } while((ch = getch()) != 'q');
   
+  delwin(posts_win);
+  delwin(bottom_menu_win);
+  delwin(side_menu_win);
   endwin();
   free_posts(posts);
+  regfree(&num_comments_regex);
 
   return 0;
 }
