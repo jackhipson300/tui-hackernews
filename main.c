@@ -232,6 +232,8 @@ Post** get_posts(char *url) {
     curl_easy_cleanup(handles[i]);
   }
   curl_multi_cleanup(multi_handle);
+  free(raw);
+  free(ids);
 
   if(err) {
     return NULL;
@@ -360,8 +362,8 @@ int main() {
   }
 
   char *choices[][2] = {
-    { "b", "Best" },
     { "f", "Front Page" },
+    { "b", "Best" },
     { "n", "Newest" }
   };
   int num_choices = 3;
@@ -398,15 +400,16 @@ int main() {
   refresh();
 
   int highlight_idx = 0;
-  char curr_filter = 'b';
+  char curr_filter = 'f';
 
   // initial display
   display_side_menu(side_menu_win, controls, num_controls);
   display_bottom_menu(bottom_menu_win, BOTTOM_MENU_HEIGHT, screen_width, choices, num_choices, curr_filter);
+  display_posts(posts_win, posts, highlight_idx);
 
   int should_refresh_bottom_menu;
   int ch;
-  do {
+  while((ch = getch()) != 'q') {
     should_refresh_bottom_menu = 0;
     switch(ch) {
       case 'j':
@@ -458,7 +461,7 @@ int main() {
     }
     
     refresh();
-  } while((ch = getch()) != 'q');
+  } 
   
   delwin(posts_win);
   delwin(bottom_menu_win);
