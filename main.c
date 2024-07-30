@@ -2,19 +2,19 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
-#include <regex.h>
 #include <assert.h>
 #include <curl/curl.h>
-#include <libxml/parser.h>
-#include <libxml/tree.h>
+#include <cjson/cJSON.h>
 #include <ncurses.h>
 
 #define BOTTOM_MENU_HEIGHT 3
 #define SIDE_MENU_WIDTH 30
 
-#define BEST_URL "https://hnrss.org/best"
-#define FRONT_PAGE_URL "https://hnrss.org/frontpage"
-#define NEWEST_URL "https://hnrss.org/newest"
+#define MAX_NUM_POSTS 30
+
+#define BEST_URL "https://hacker-news.firebaseio.com/v0/beststories.json"
+#define FRONT_PAGE_URL "https://hacker-news.firebaseio.com/v0/topstories.json"
+#define NEWEST_URL "https://hacker-news.firebaseio.com/v0/newstories.json"
 
 struct MemoryStruct {
   char *memory;
@@ -41,7 +41,7 @@ static size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, voi
   return realsize;
 }
 
-char* read_rss(const char *url) {
+char* curl_easy_request(const char *url) {
   CURL *curl;
   CURLcode res;
   struct MemoryStruct chunk;
@@ -76,136 +76,169 @@ char* read_rss(const char *url) {
 
 
 typedef struct {
+  int id;
   char *title;
   char *link;
-  char *comments_link;
-  char *num_comments;
+  int score;
 } Post;
 
-typedef struct {
-  Post **arr;
-  int len;
-} Posts;
-
 void print_post(Post *post) {
+  printf("Id: %d\n", post->id);
   printf("Title: %s\n", post->title);
   printf("\tLink: %s\n", post->link);
-  printf("\tComments: %s\n", post->comments_link);
+  printf("\tScore: %d\n", post->score);
 }
 
-void free_posts(Posts *posts) {
-  for(int i = 0; i < posts->len; ++i) {
-    free(posts->arr[i]->title);
-    free(posts->arr[i]->link);
-    free(posts->arr[i]->comments_link);
-    free(posts->arr[i]->num_comments);
-    free(posts->arr[i]);
+void free_posts(Post** posts) {
+  for(int i = 0; i < MAX_NUM_POSTS; ++i) {
+    free(posts[i]->title);
+    free(posts[i]->link);
+    free(posts[i]);
   }
-  free(posts->arr);
   free(posts);
 }
 
-Posts* parse_xml(const char *raw, regex_t *num_comments_regex) {
-  xmlDoc *doc = NULL;
-
-  doc = xmlReadMemory(raw, (int)strlen(raw), NULL, NULL, 0);
-  if(doc == NULL) {
-    fprintf(stderr, "XML parse failed\n");
+int* get_post_ids(const char *raw) {
+  cJSON *json = cJSON_Parse(raw);
+  if(json == NULL) {
+    fprintf(stderr, "JSON parse failed\n");
     return NULL;
   }
 
-  int num_items = 0;
-  xmlNode *curr = xmlDocGetRootElement(doc);
-  curr = curr->xmlChildrenNode->xmlChildrenNode;
-  while(curr != NULL) {
-    if(!xmlStrcmp(curr->name, (const xmlChar *)"item")) {
-      ++num_items;
-    }
-
-    curr = curr->next;
+  if(!cJSON_IsArray(json)) {
+    fprintf(stderr, "Post ids response is not array");
+    return NULL;
   }
 
-  Post **posts_arr = malloc((size_t)((int)sizeof(Post*) * num_items));
-
-
+  int *arr = malloc(sizeof(int) * MAX_NUM_POSTS);
+  cJSON *element;
   int i = 0;
-  curr = xmlDocGetRootElement(doc)->xmlChildrenNode->xmlChildrenNode;
-  while(curr != NULL) {
-    if(!xmlStrcmp(curr->name, (const xmlChar *)"item")) {
-      xmlNode *child_curr = curr->xmlChildrenNode;
-      xmlChar *title;
-      xmlChar *description;
-      xmlChar *link;
-      xmlChar *comments_link;
-      while(child_curr != NULL) {
-        if(!xmlStrcmp(child_curr->name, (const xmlChar *)"title")) {
-          title = xmlNodeListGetString(doc, child_curr->xmlChildrenNode, 1);
-        } else if(!xmlStrcmp(child_curr->name, (const xmlChar *)"link")) {
-          link = xmlNodeListGetString(doc, child_curr->xmlChildrenNode, 1);
-        } else if(!xmlStrcmp(child_curr->name, (const xmlChar *)"comments")) {
-          comments_link = xmlNodeListGetString(doc, child_curr->xmlChildrenNode, 1);
-        } else if(!xmlStrcmp(child_curr->name, (const xmlChar *)"description")) {
-          description = xmlNodeListGetString(doc, child_curr->xmlChildrenNode, 1);
-        }
-
-        child_curr = child_curr->next;
-      }
-
-      char *num_comments_str = "?";
-      regmatch_t matches[2];
-      int regexec_res = regexec(num_comments_regex, (char*)description, 2, matches, 0);
-      if(regexec_res == 0) {
-        size_t substr_size = (size_t)(matches[1].rm_eo - matches[1].rm_so);
-        num_comments_str = malloc(sizeof(char) * (substr_size + 1));
-        for(int j = matches[1].rm_so; j < matches[1].rm_eo; ++j) {
-          num_comments_str[j - matches[1].rm_so] = (char)description[j];
-        }
-        num_comments_str[substr_size] = '\0';
-      }
-
-      Post *post = malloc(sizeof(Post));
-      post->title = malloc(strlen((char*)title) + 1);
-      post->link = malloc(strlen((char*)link) + 1);
-      post->comments_link = malloc(strlen((char*)comments_link) + 1);
-      post->num_comments = num_comments_str;
-
-      strcpy(post->title, (char*)title);
-      strcpy(post->link, (char*)link);
-      strcpy(post->comments_link, (char*)comments_link);
-
-      if(title != NULL) {
-        xmlFree(title);
-        title = NULL;
-      }
-      if(link != NULL) {
-        xmlFree(link);
-        link = NULL;
-      }
-      if(comments_link != NULL) {
-        xmlFree(comments_link);
-        comments_link = NULL;
-      }
-      if(description != NULL) {
-        xmlFree(description);
-        description = NULL;
-      }
-
-      posts_arr[i] = post;
-
-      ++i;
+  cJSON_ArrayForEach(element, json) {
+    if(i == MAX_NUM_POSTS) {
+      break;
     }
 
-    curr = curr->next;
+    arr[i] = element->valueint;
+    ++i;
   }
 
-  xmlFreeDoc(doc);
-  xmlCleanupParser();
+  cJSON_Delete(json);
 
-  Posts *posts = malloc(sizeof(Posts));
-  posts->arr = posts_arr;
-  posts->len = num_items;
+  return arr;
+}
 
-  return posts;
+Post** get_posts(char *url) {
+  char *raw = curl_easy_request(url);
+  int *ids = get_post_ids(raw);
+
+  CURL *handles[MAX_NUM_POSTS];
+  struct MemoryStruct chunks[MAX_NUM_POSTS];
+  CURLM *multi_handle = curl_multi_init();
+
+  for(int i = 0; i < MAX_NUM_POSTS; ++i) {
+    char post_url[100];
+    snprintf(post_url, sizeof(post_url), "https://hacker-news.firebaseio.com/v0/item/%d.json", ids[i]);
+
+    chunks[i].memory = malloc(1);
+    chunks[i].size = 0;
+    handles[i] = curl_easy_init();
+    curl_easy_setopt(handles[i], CURLOPT_URL, post_url);
+    curl_easy_setopt(handles[i], CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+    curl_easy_setopt(handles[i], CURLOPT_WRITEDATA, (void*)&chunks[i]);
+
+    curl_multi_add_handle(multi_handle, handles[i]);
+  }
+
+  int curl_running = 1;
+  while(curl_running) {
+    CURLMcode mcode = curl_multi_perform(multi_handle, &curl_running);
+    if(curl_running) {
+      mcode = curl_multi_poll(multi_handle, NULL, 0, 1000, NULL);
+    }
+
+    if(mcode) {
+      break;
+    }
+  }
+
+  CURLMsg *msg;
+  int messages_left;
+  while((msg = curl_multi_info_read(multi_handle, &messages_left)) != NULL) {
+    if(msg->msg != CURLMSG_DONE) {
+      fprintf(stderr, "Batched libcurl request not done when expected\n");
+      return NULL;
+    }
+    if(msg->data.result != CURLE_OK) {
+      fprintf(stderr, "Batched libcurl request error %s\n", curl_easy_strerror(msg->data.result));
+      return NULL;
+    }
+  }
+
+  int err = 0;
+  Post **posts_arr = malloc(sizeof(Post*) * MAX_NUM_POSTS);
+  for(int i = 0; i < MAX_NUM_POSTS; ++i) {
+    cJSON *json = cJSON_Parse(chunks[i].memory);
+    if(json == NULL) {
+      fprintf(stderr, "JSON parse failed\n");
+      return NULL;
+    }
+
+    cJSON *title = cJSON_GetObjectItemCaseSensitive(json, "title");
+    cJSON *link = cJSON_GetObjectItemCaseSensitive(json, "url");
+    cJSON *score = cJSON_GetObjectItemCaseSensitive(json, "score");
+
+    Post *post = malloc(sizeof(Post));
+    post->id = ids[i];  
+
+    if(!cJSON_IsString(title)) {
+      fprintf(stderr, "Title is not string (%d)\n", ids[i]);
+      err = 1;
+    }
+
+    if(!cJSON_IsString(link)) {
+      // Ask HN posts do not have an article link
+      if(strncmp(title->valuestring, "Ask HN:", 7) == 0) {
+        char ask_hn_link[100];
+        snprintf(ask_hn_link, sizeof(ask_hn_link), "https://news.ycombinator.com/item?id=%d", ids[i]);
+        post->link = malloc(strlen(ask_hn_link) + 1);
+        strcpy(post->link, ask_hn_link);     
+      } else {
+        err = 1;
+      }
+    } else {
+      post->link = malloc(strlen(link->valuestring) + 1);
+      strcpy(post->link, link->valuestring);
+    }
+
+    if(!cJSON_IsNumber(score)) {
+      fprintf(stderr, "Score is not number (%d)\n", ids[i]);
+      err = 1;
+    }
+
+    if(err) {
+      cJSON_Delete(json);
+      break;
+    }
+
+    post->title = malloc(strlen(title->valuestring) + 1);
+    post->score = score->valueint;
+
+    strcpy(post->title, title->valuestring);
+
+    posts_arr[i] = post;
+
+    cJSON_Delete(json);
+  }
+
+  for(int i = 0; i < MAX_NUM_POSTS; ++i) {
+    free(chunks[i].memory);
+  }
+
+  if(err) {
+    return NULL;
+  }
+
+  return posts_arr;
 }
 
 void display_bottom_menu(WINDOW *win, int height, int width, char *choices[][2], int num_choices, char curr_filter) {
@@ -266,8 +299,8 @@ void display_side_menu(WINDOW *win, char *controls[][2], int num_controls) {
   wrefresh(win);
 }
 
-void display_posts(WINDOW *win, Posts *posts, int highlight_idx) {
-  for(int i = 0; i < posts->len; ++i) {
+void display_posts(WINDOW *win, Post **posts, int highlight_idx) {
+  for(int i = 0; i < MAX_NUM_POSTS; ++i) {
     wmove(win, (i * 2) + 1, 2);
     wclrtoeol(win);
     if(highlight_idx == i) {
@@ -279,10 +312,10 @@ void display_posts(WINDOW *win, Posts *posts, int highlight_idx) {
 
     wprintw(win, "%d.", i + 1);
     wmove(win, (i * 2) + 1, 6);
-    wprintw(win, "%s", posts->arr[i]->title);
+    wprintw(win, "%s", posts[i]->title);
     wprintw(win, " (");
     wattron(win, COLOR_PAIR(1));
-    wprintw(win, "%s", posts->arr[i]->num_comments);
+    wprintw(win, "%d", posts[i]->score);
     wattroff(win, COLOR_PAIR(1));
     wprintw(win, ")");
 
@@ -293,20 +326,8 @@ void display_posts(WINDOW *win, Posts *posts, int highlight_idx) {
   wrefresh(win);
 }
 
-Posts* get_posts(char *url, regex_t *num_comments_regex) {
-  char *rss_xml = read_rss(url);
-  
-  if(rss_xml == NULL) {
-    return NULL;
-  }
-  
-  Posts* posts = parse_xml(rss_xml, num_comments_regex);
-  free(rss_xml);
-  return posts;
-}
-
-Posts* update_posts(Posts *posts, char *url, regex_t *num_comments_regex) {
-  Posts *new_posts = get_posts(url, num_comments_regex);
+Post** update_posts(Post **posts, char *url) {
+  Post **new_posts = get_posts(url);
   if(new_posts == NULL) {
     return posts;
   }
@@ -327,11 +348,12 @@ void open_link(char *link) {
 }
 
 int main() {
-  regex_t num_comments_regex;
-  int regcomp_res = regcomp(&num_comments_regex, "# Comments: ([0-9]+)", REG_EXTENDED);
-  assert(regcomp_res == 0);
+  if(freopen("debug.txt", "w", stderr) == NULL) {
+    fprintf(stderr, "Error writing debug log");
+    return 1;
+  }
 
-  Posts *posts = get_posts(BEST_URL, &num_comments_regex);
+  Post **posts = get_posts(BEST_URL);
   if(posts == NULL) {
     return 1;
   }
@@ -394,30 +416,30 @@ int main() {
         break;
       case 'b':
         if(curr_filter != 'b') {
-          posts = update_posts(posts, BEST_URL, &num_comments_regex);
+          posts = update_posts(posts, BEST_URL);
           curr_filter = 'b';
         }
         should_refresh_bottom_menu = 1;
         break;
       case 'f':
         if(curr_filter != 'f') {
-          posts = update_posts(posts, FRONT_PAGE_URL, &num_comments_regex);
+          posts = update_posts(posts, FRONT_PAGE_URL);
           curr_filter = 'f';
         }
         should_refresh_bottom_menu = 1;
         break;
       case 'n':
         if(curr_filter != 'n') {
-          posts = update_posts(posts, NEWEST_URL, &num_comments_regex);
+          posts = update_posts(posts, NEWEST_URL);
           curr_filter = 'n';
         }
         should_refresh_bottom_menu = 1;
         break;
       case 'o':
-        open_link(posts->arr[highlight_idx]->link);
+        open_link(posts[highlight_idx]->link);
         break;
       case 'c':
-        open_link(posts->arr[highlight_idx]->comments_link);
+        // TODO open_link(posts[highlight_idx]->comments_link);
         break;
       default:
         break;
@@ -425,8 +447,8 @@ int main() {
 
     if(highlight_idx < 0) {
       highlight_idx = 0;
-    } else if(highlight_idx >= posts->len) {
-      highlight_idx = posts->len - 1;
+    } else if(highlight_idx >= MAX_NUM_POSTS) {
+      highlight_idx = MAX_NUM_POSTS - 1;
     }
 
     display_posts(posts_win, posts, highlight_idx);
@@ -442,7 +464,6 @@ int main() {
   delwin(side_menu_win);
   endwin();
   free_posts(posts);
-  regfree(&num_comments_regex);
 
   return 0;
 }

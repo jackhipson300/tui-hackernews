@@ -1,3 +1,4 @@
 main
 .vscode
 massif.out.*
+debug.txt
