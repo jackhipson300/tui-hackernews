@@ -83,10 +83,10 @@ typedef struct {
 } Post;
 
 void print_post(Post *post) {
-  printf("Id: %d\n", post->id);
-  printf("Title: %s\n", post->title);
-  printf("\tLink: %s\n", post->link);
-  printf("\tScore: %d\n", post->score);
+  fprintf(stderr, "Id: %d\n", post->id);
+  fprintf(stderr, "Title: %s\n", post->title);
+  fprintf(stderr, "\tLink: %s\n", post->link);
+  fprintf(stderr, "\tScore: %d\n", post->score);
 }
 
 void free_posts(Post** posts) {
@@ -196,15 +196,11 @@ Post** get_posts(char *url) {
     }
 
     if(!cJSON_IsString(link)) {
-      // Ask HN posts do not have an article link
-      if(strncmp(title->valuestring, "Ask HN:", 7) == 0) {
-        char ask_hn_link[100];
-        snprintf(ask_hn_link, sizeof(ask_hn_link), "https://news.ycombinator.com/item?id=%d", ids[i]);
-        post->link = malloc(strlen(ask_hn_link) + 1);
-        strcpy(post->link, ask_hn_link);     
-      } else {
-        err = 1;
-      }
+      // Ask HN and similar posts do not have an article link
+      char hn_link[100];
+      snprintf(hn_link, sizeof(hn_link), "https://news.ycombinator.com/item?id=%d", ids[i]);
+      post->link = malloc(strlen(hn_link) + 1);
+      strcpy(post->link, hn_link);     
     } else {
       post->link = malloc(strlen(link->valuestring) + 1);
       strcpy(post->link, link->valuestring);
@@ -232,7 +228,10 @@ Post** get_posts(char *url) {
 
   for(int i = 0; i < MAX_NUM_POSTS; ++i) {
     free(chunks[i].memory);
+    curl_multi_remove_handle(multi_handle, handles[i]);
+    curl_easy_cleanup(handles[i]);
   }
+  curl_multi_cleanup(multi_handle);
 
   if(err) {
     return NULL;
@@ -326,14 +325,15 @@ void display_posts(WINDOW *win, Post **posts, int highlight_idx) {
   wrefresh(win);
 }
 
-Post** update_posts(Post **posts, char *url) {
+void update_posts(Post ***posts, char *url) {
   Post **new_posts = get_posts(url);
   if(new_posts == NULL) {
-    return posts;
+    fprintf(stderr, "Error updating posts: posts are null");
+    return;
   }
 
-  free_posts(posts);
-  return new_posts;
+  free_posts(*posts);
+  *posts = new_posts;
 }
 
 void open_link(char *link) {
@@ -353,8 +353,9 @@ int main() {
     return 1;
   }
 
-  Post **posts = get_posts(BEST_URL);
+  Post **posts = get_posts(FRONT_PAGE_URL);
   if(posts == NULL) {
+    fprintf(stderr, "Posts are null");
     return 1;
   }
 
@@ -416,21 +417,21 @@ int main() {
         break;
       case 'b':
         if(curr_filter != 'b') {
-          posts = update_posts(posts, BEST_URL);
+          update_posts(&posts, BEST_URL);
           curr_filter = 'b';
         }
         should_refresh_bottom_menu = 1;
         break;
       case 'f':
         if(curr_filter != 'f') {
-          posts = update_posts(posts, FRONT_PAGE_URL);
+          update_posts(&posts, FRONT_PAGE_URL);
           curr_filter = 'f';
         }
         should_refresh_bottom_menu = 1;
         break;
       case 'n':
         if(curr_filter != 'n') {
-          posts = update_posts(posts, NEWEST_URL);
+          update_posts(&posts, NEWEST_URL);
           curr_filter = 'n';
         }
         should_refresh_bottom_menu = 1;
