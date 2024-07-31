@@ -79,6 +79,7 @@ typedef struct {
   int id;
   char *title;
   char *link;
+  char *comments_link;
   int score;
 } Post;
 
@@ -86,6 +87,7 @@ void print_post(Post *post) {
   fprintf(stderr, "Id: %d\n", post->id);
   fprintf(stderr, "Title: %s\n", post->title);
   fprintf(stderr, "\tLink: %s\n", post->link);
+  fprintf(stderr, "\tComments Link: %s\n", post->comments_link);
   fprintf(stderr, "\tScore: %d\n", post->score);
 }
 
@@ -93,6 +95,7 @@ void free_posts(Post** posts) {
   for(int i = 0; i < MAX_NUM_POSTS; ++i) {
     free(posts[i]->title);
     free(posts[i]->link);
+    free(posts[i]->comments_link);
     free(posts[i]);
   }
   free(posts);
@@ -190,6 +193,11 @@ Post** get_posts(char *url) {
     Post *post = malloc(sizeof(Post));
     post->id = ids[i];  
 
+    char comments_link[100];
+    snprintf(comments_link, sizeof(comments_link), "https://news.ycombinator.com/item?id=%d", ids[i]);
+    post->comments_link = malloc(strlen(comments_link) + 1);
+    strcpy(post->comments_link, comments_link);
+
     if(!cJSON_IsString(title)) {
       fprintf(stderr, "Title is not string (%d)\n", ids[i]);
       err = 1;
@@ -197,10 +205,8 @@ Post** get_posts(char *url) {
 
     if(!cJSON_IsString(link)) {
       // Ask HN and similar posts do not have an article link
-      char hn_link[100];
-      snprintf(hn_link, sizeof(hn_link), "https://news.ycombinator.com/item?id=%d", ids[i]);
-      post->link = malloc(strlen(hn_link) + 1);
-      strcpy(post->link, hn_link);     
+      post->link = malloc(strlen(comments_link) + 1);
+      strcpy(post->link, comments_link);     
     } else {
       post->link = malloc(strlen(link->valuestring) + 1);
       strcpy(post->link, link->valuestring);
@@ -443,7 +449,7 @@ int main() {
         open_link(posts[highlight_idx]->link);
         break;
       case 'c':
-        // TODO open_link(posts[highlight_idx]->comments_link);
+        open_link(posts[highlight_idx]->comments_link);
         break;
       default:
         break;
