@@ -16,27 +16,64 @@
 #define FRONT_PAGE_URL "https://hacker-news.firebaseio.com/v0/topstories.json"
 #define NEWEST_URL "https://hacker-news.firebaseio.com/v0/newstories.json"
 
+FILE *debug = NULL;
+
+char *choices[][2] = {
+  { "f", "Front Page" },
+  { "b", "Best" },
+  { "n", "Newest" }
+};
+int num_choices = 3;
+
+char *controls[][2] = {
+  { "j", "Move Down" },
+  { "k", "Move Up" },
+  { "o", "Open Article" },
+  { "c", "Open Comments" },
+  { "q", "Quit" }
+};
+int num_controls = 5;
+
+void setup_debug_logs() {
+  #ifdef DEVELOPMENT
+  debug = fopen("debug.log", "w");
+  if(debug == NULL) {
+    fprintf(stderr, "Failed to open debug log\n");
+    exit(EXIT_FAILURE);
+  }
+  #else 
+  debug = fopen("/dev/null", "w");
+  if(debug == NULL) {
+    fprintf(stderr, "Failed to open debug log\n");
+    exit(EXIT_FAILURE);
+  }
+  #endif 
+
+  if(dup2(fileno(debug), STDERR_FILENO) == -1) {
+    fprintf(stderr, "Failed to redirect stderr\n");
+    exit(EXIT_FAILURE);
+  }
+}
+
 struct MemoryStruct {
   char *memory;
   size_t size;
 };
 
-// Callback function to write data to memory
 static size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, void *userp) {
   size_t realsize = size * nmemb;
   struct MemoryStruct *mem = (struct MemoryStruct *)userp;
 
-  // Reallocate memory to accommodate new data
-  char *temp = realloc(mem->memory, mem->size + realsize + 1); // +1 for null-terminator
+  char *temp = realloc(mem->memory, mem->size + realsize + 1); 
   if (temp == NULL) {
     fprintf(stderr, "Not enough memory (realloc returned NULL)\n");
-    return 0; // Fail to indicate that data was not written
+    return 0; 
   }
 
   mem->memory = temp;
   memcpy(&(mem->memory[mem->size]), contents, realsize);
   mem->size += realsize;
-  mem->memory[mem->size] = 0; // Null-terminate the string
+  mem->memory[mem->size] = 0; 
 
   return realsize;
 }
@@ -84,11 +121,11 @@ typedef struct {
 } Post;
 
 void print_post(Post *post) {
-  fprintf(stderr, "Id: %d\n", post->id);
-  fprintf(stderr, "Title: %s\n", post->title);
-  fprintf(stderr, "\tLink: %s\n", post->link);
-  fprintf(stderr, "\tComments Link: %s\n", post->comments_link);
-  fprintf(stderr, "\tScore: %d\n", post->score);
+  fprintf(debug, "Id: %d\n", post->id);
+  fprintf(debug, "Title: %s\n", post->title);
+  fprintf(debug, "\tLink: %s\n", post->link);
+  fprintf(debug, "\tComments Link: %s\n", post->comments_link);
+  fprintf(debug, "\tScore: %d\n", post->score);
 }
 
 void free_posts(Post** posts) {
@@ -248,7 +285,7 @@ Post** get_posts(char *url) {
   return posts_arr;
 }
 
-void display_bottom_menu(WINDOW *win, int height, int width, char *choices[][2], int num_choices, char curr_filter) {
+void display_bottom_menu(WINDOW *win, int height, int width, char curr_filter) {
   box(win, 0, 0);
 
   int avail_width_per_item = width / num_choices;
@@ -289,7 +326,7 @@ void display_bottom_menu(WINDOW *win, int height, int width, char *choices[][2],
   wrefresh(win);
 }
 
-void display_side_menu(WINDOW *win, char *controls[][2], int num_controls) {
+void display_side_menu(WINDOW *win) {
   box(win, 0, 0);
 
   int y ;
@@ -306,9 +343,10 @@ void display_side_menu(WINDOW *win, char *controls[][2], int num_controls) {
   wrefresh(win);
 }
 
-void display_posts(WINDOW *win, Post **posts, int highlight_idx) {
-  for(int i = 0; i < MAX_NUM_POSTS; ++i) {
-    wmove(win, (i * 2) + 1, 2);
+void display_posts(WINDOW *win, Post **posts, int highlight_idx, int offset, int max_posts_in_win) {
+  for(int i = offset; i < MAX_NUM_POSTS && i - offset < max_posts_in_win; ++i) {
+    int y = (i * 2) + 1 - (offset * 2);
+    wmove(win, y, 2);
     wclrtoeol(win);
     if(highlight_idx == i) {
       wattron(win, A_REVERSE);
@@ -318,7 +356,7 @@ void display_posts(WINDOW *win, Post **posts, int highlight_idx) {
     }
 
     wprintw(win, "%d.", i + 1);
-    wmove(win, (i * 2) + 1, 6);
+    wmove(win, y, 6);
     wprintw(win, "%s", posts[i]->title);
     wprintw(win, " (");
     wattron(win, COLOR_PAIR(1));
@@ -356,10 +394,7 @@ void open_link(char *link) {
 }
 
 int main() {
-  if(freopen("debug.txt", "w", stderr) == NULL) {
-    fprintf(stderr, "Error writing debug log");
-    return 1;
-  }
+  setup_debug_logs();
 
   Post **posts = get_posts(FRONT_PAGE_URL);
   if(posts == NULL) {
@@ -367,21 +402,9 @@ int main() {
     return 1;
   }
 
-  char *choices[][2] = {
-    { "f", "Front Page" },
-    { "b", "Best" },
-    { "n", "Newest" }
-  };
-  int num_choices = 3;
-
-  char *controls[][2] = {
-    { "j", "Move Down" },
-    { "k", "Move Up" },
-    { "o", "Open Article" },
-    { "c", "Open Comments" },
-    { "q", "Quit" }
-  };
-  int num_controls = 5;
+  for(int i = 0; i < MAX_NUM_POSTS; ++i) {
+    print_post(posts[i]);
+  }
 
   WINDOW *posts_win;
   WINDOW *bottom_menu_win;
@@ -406,12 +429,14 @@ int main() {
   refresh();
 
   int highlight_idx = 0;
+  int posts_offset = 0;
+  int max_posts_in_win = (screen_height - BOTTOM_MENU_HEIGHT) / 2;
   char curr_filter = 'f';
 
   // initial display
-  display_side_menu(side_menu_win, controls, num_controls);
-  display_bottom_menu(bottom_menu_win, BOTTOM_MENU_HEIGHT, screen_width, choices, num_choices, curr_filter);
-  display_posts(posts_win, posts, highlight_idx);
+  display_side_menu(side_menu_win);
+  display_bottom_menu(bottom_menu_win, BOTTOM_MENU_HEIGHT, screen_width, curr_filter);
+  display_posts(posts_win, posts, highlight_idx, posts_offset, max_posts_in_win);
 
   int should_refresh_bottom_menu;
   int ch;
@@ -461,9 +486,15 @@ int main() {
       highlight_idx = MAX_NUM_POSTS - 1;
     }
 
-    display_posts(posts_win, posts, highlight_idx);
+    if(highlight_idx >= posts_offset + max_posts_in_win && posts_offset < MAX_NUM_POSTS - 1) {
+      ++posts_offset;
+    } else if(highlight_idx < posts_offset) {
+      --posts_offset;
+    }
+
+    display_posts(posts_win, posts, highlight_idx, posts_offset, max_posts_in_win);
     if(should_refresh_bottom_menu) {
-      display_bottom_menu(bottom_menu_win, BOTTOM_MENU_HEIGHT, screen_width, choices, num_choices, curr_filter);
+      display_bottom_menu(bottom_menu_win, BOTTOM_MENU_HEIGHT, screen_width, curr_filter);
     }
     
     refresh();

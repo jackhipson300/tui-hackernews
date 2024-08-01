@@ -2,7 +2,7 @@ CFLAGS = -Wall -Wextra -Werror -pedantic -Wconversion -Wshadow -Wformat -Wvla -f
 LDFLAGS = -I/usr/include/libxml2 -lcurl -lncurses -lcjson
 
 main: main.c
-	gcc $(CFLAGS) -g -o main main.c $(LDFLAGS)
+	gcc -DDEVELOPMENT $(CFLAGS) -g -o main main.c $(LDFLAGS)
 
 valgrind: main 
 	valgrind --leak-check=full -s ./main
