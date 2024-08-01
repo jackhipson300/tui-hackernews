@@ -8,7 +8,7 @@ valgrind: main
 	valgrind --leak-check=full -s ./main
 
 production: main 
-	gcc -O3 -Wno-unused-result -o main main.c $(LDFLAGS)
+	gcc -O3 -Wno-unused-result -o hnews main.c $(LDFLAGS)
 
 clean:
 	rm main
